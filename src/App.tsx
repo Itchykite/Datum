@@ -25,19 +25,10 @@ function App() {
         </nav>
         <div className="sidebar-tables">
           <h3>Tabele</h3>
-          <ul>
-            <li className="active-table">
-              <a href="#table-customers">Klienci</a>
-            </li>
-            <li>
-              <a href="#table-orders">Zamówienia</a>
-            </li>
-            <li>
-              <a href="#table-products">Produkty</a>
-            </li>
-          </ul>
+          // List of tables
         </div>
       </aside>
+
       <main className="main-content">
         <header className="main-header">
           <h1>Tabela: Klienci</h1>
@@ -48,47 +39,8 @@ function App() {
         </header>
         <div className="table-container">
           <table className="data-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Imię</th>
-                <th>Nazwisko</th>
-                <th>Email</th>
-                <th>Akcje</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>1</td>
-                <td>Jan</td>
-                <td>Kowalski</td>
-                <td>jan.kowalski@example.com</td>
-                <td>
-                  <button className="btn-icon">✏️</button>
-                  <button className="btn-icon btn-danger">🗑️</button>
-                </td>
-              </tr>
-              <tr>
-                <td>2</td>
-                <td>Anna</td>
-                <td>Nowak</td>
-                <td>anna.nowak@example.com</td>
-                <td>
-                  <button className="btn-icon">✏️</button>
-                  <button className="btn-icon btn-danger">🗑️</button>
-                </td>
-              </tr>
-              <tr>
-                <td>3</td>
-                <td>Piotr</td>
-                <td>Zieliński</td>
-                <td>piotr.zielinski@example.com</td>
-                <td>
-                  <button className="btn-icon">✏️</button>
-                  <button className="btn-icon btn-danger">🗑️</button>
-                </td>
-              </tr>
-            </tbody>
+            <thead> // table headers</thead>
+            <tbody>// placeholder data</tbody>
           </table>
         </div>
       </main>
