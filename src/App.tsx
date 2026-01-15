@@ -1,9 +1,28 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
 function App() {
+  const [tabeNames, setTableNames] = useState([]);
+  const [error, setError] = useState(null);
+
+  const fetchTableNames = () => {
+    setError(null);
+    invoke("get_table_names")
+      .then((names) => {
+        console.log("Tables from Rust:", names);
+        setTableNames(names);
+      })
+      .catch((err) => {
+        console.error("Error fetching table names:", err);
+        setError(err.toString());
+      });
+  };
+
+  useEffect(() => {
+    fetchTableNames();
+  }, []);
+
   return (
     <div className="database-manager">
       <aside className="sidebar">
@@ -12,20 +31,24 @@ function App() {
         </div>
         <nav className="sidebar-nav">
           <ul>
-            <li className="active">
-              <a href="#db-main">GłównaBazaDanych</a>
-            </li>
             <li>
-              <a href="#db-logs">LogiSystemowe</a>
-            </li>
-            <li>
-              <a href="#db-users">UzytkownicyDB</a>
+              <a href="#db">warehouse_db</a>
             </li>
           </ul>
         </nav>
         <div className="sidebar-tables">
           <h3>Tabele</h3>
-          // List of tables
+          <ul>
+            <li className="active-table">
+              <a href="#table-customers">Klienci</a>
+            </li>
+            <li>
+              <a href="#table-orders">Zamówienia</a>
+            </li>
+            <li>
+              <a href="#table-products">Produkty</a>
+            </li>
+          </ul>
         </div>
       </aside>
 
