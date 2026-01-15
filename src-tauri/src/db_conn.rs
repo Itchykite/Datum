@@ -1,4 +1,5 @@
-use once_cell::sync::Lazy;
+use crate::DbConnection;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{
     mysql::MySqlPoolOptions,
@@ -6,49 +7,106 @@ use sqlx::{
         chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc},
         BigDecimal,
     },
-    Column, MySql, Pool, Row, TypeInfo, ValueRef,
+    Column, Row, TypeInfo, ValueRef,
 };
-use std::env;
+use tauri::{AppHandle, Manager, State};
 
-static DB_POOL: Lazy<Pool<MySql>> = Lazy::new(|| {
-    dotenvy::dotenv().ok();
-    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    MySqlPoolOptions::new()
-        .max_connections(5)
-        .connect_lazy(&db_url)
-        .expect("Failed to create database pool")
-});
+#[derive(Deserialize)]
+pub struct ConnectionDetails {
+    host: String,
+    port: u16,
+    user: String,
+    password: Option<String>,
+    #[serde(rename = "dbName")]
+    db_name: String,
+}
 
 #[tauri::command]
-pub async fn get_table_names() -> Result<Vec<String>, String> {
-    let query = "SHOW TABLES";
-    sqlx::query(query)
-        .fetch_all(&*DB_POOL)
+pub async fn connect_db(
+    details: ConnectionDetails,
+    app_handle: AppHandle,
+    db_conn: State<'_, DbConnection>,
+) -> Result<(), String> {
+    let db_url = format!(
+        "mysql://{}:{}@{}:{}/{}",
+        details.user,
+        details.password.unwrap_or_default(),
+        details.host,
+        details.port,
+        details.db_name
+    );
+
+    let pool = MySqlPoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await
+        .map_err(|e| format!("Błąd połączenia z bazą danych: {}", e))?;
+
+    *db_conn.0.lock().await = Some(pool);
+
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        main_window.show().unwrap();
+        main_window.maximize().unwrap();
+    }
+
+    if let Some(login_window) = app_handle.get_webview_window("login") {
+        login_window.close().unwrap();
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_table_names(db_conn: State<'_, DbConnection>) -> Result<Vec<String>, String> {
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
+    sqlx::query("SHOW TABLES")
+        .fetch_all(&pool)
         .await
         .map(|rows| rows.into_iter().map(|row| row.get(0)).collect())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_table_columns(table_name: String) -> Result<Vec<String>, String> {
+pub async fn get_table_columns(
+    table_name: String,
+    db_conn: State<'_, DbConnection>,
+) -> Result<Vec<String>, String> {
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
     let sql = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
     sqlx::query(sql)
         .bind(table_name)
-        .fetch_all(&*DB_POOL)
+        .fetch_all(&pool)
         .await
         .map(|rows| rows.into_iter().map(|row| row.get(0)).collect())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_table_content(table_name: String) -> Result<Vec<Value>, String> {
-    let allowed_tables = get_table_names().await?;
+pub async fn get_table_content(
+    table_name: String,
+    db_conn: State<'_, DbConnection>,
+) -> Result<Vec<Value>, String> {
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
+    let allowed_tables = get_table_names(db_conn).await?;
     if !allowed_tables.contains(&table_name) {
         return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
     }
+
     let query = format!("SELECT * FROM `{}`", table_name);
     let rows = sqlx::query(&query)
-        .fetch_all(&*DB_POOL)
+        .fetch_all(&pool)
         .await
         .map_err(|e| e.to_string())?;
 

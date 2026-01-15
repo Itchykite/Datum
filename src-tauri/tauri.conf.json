@@ -12,9 +12,24 @@
   "app": {
     "windows": [
       {
+        "label": "login",
+        "url": "login.html",
+        "title": "Datum - Login",
+        "width": 800,
+        "height": 600,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "fullscreen": false,
+        "center": true
+      },
+      {
+        "label": "main",
+        "url": "main.html",
         "title": "Datum",
         "width": 1280,
-        "height": 720 
+        "height": 720,
+        "visible": false
       }
     ],
     "security": {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -7,17 +7,29 @@ function App() {
   const [columnNames, setColumnNames] = useState<string[]>([]);
   const [tableContent, setTableContent] = useState<any[]>([]);
   const [activeTable, setActiveTable] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
 
-  const [error, setError] = useState(null);
+  const pollingRef = useRef<number | null>(null);
 
   const fetchTableNames = () => {
+    console.log("Pobieram listę tabel...");
     setError(null);
-    invoke<string[]>("get_table_names")
+    return invoke<string[]>("get_table_names")
       .then((names) => {
+        console.log("Sukces! Pobrano tabele.", names);
         setTableNames(names);
+        setIsConnected(true);
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current);
+        }
       })
       .catch((err) => {
-        setError(err.toString());
+        console.error("Błąd podczas pobierania tabel:", err);
+        if (isConnected) {
+          setError(err.toString());
+        }
+        throw err;
       });
   };
 
@@ -39,9 +51,41 @@ function App() {
         setTableContent([]);
       });
   };
+
   useEffect(() => {
-    fetchTableNames();
+    const tryFetch = () => {
+      fetchTableNames().catch(() => {
+        console.log("Nie udało się połączyć, próbuję ponownie...");
+      });
+    };
+
+    tryFetch();
+
+    pollingRef.current = window.setInterval(tryFetch, 200);
+
+    const timeoutId = window.setTimeout(() => {
+      if (!isConnected) {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        setError("Nie udało się połączyć z bazą danych w ciągu 5 sekund.");
+        console.error("Timeout: Nie udało się połączyć z bazą.");
+      }
+    }, 5000);
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+      }
+      clearTimeout(timeoutId);
+    };
   }, []);
+
+  if (!isConnected) {
+    return (
+      <div className="status-container">
+        {error ? `Błąd: ${error}` : "Łączenie z bazą danych..."}
+      </div>
+    );
+  }
 
   return (
     <div className="database-manager">
@@ -103,7 +147,9 @@ function App() {
             </table>
           ) : (
             <p>
-              Wybierz tabelę z panelu bocznego, aby wyświetlić jej zawartość.
+              {activeTable
+                ? "Ładowanie danych..."
+                : "Wybierz tabelę z panelu bocznego, aby wyświetlić jej zawartość."}
             </p>
           )}
         </div>
