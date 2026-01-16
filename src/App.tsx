@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 function App() {
@@ -8,34 +9,44 @@ function App() {
   const [tableContent, setTableContent] = useState<any[]>([]);
   const [activeTable, setActiveTable] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
-
-  const pollingRef = useRef<number | null>(null);
+  const [status, setStatus] = useState(
+    "Oczekiwanie na połączenie z bazą danych...",
+  );
+  const [isReady, setIsReady] = useState(false);
 
   const fetchTableNames = () => {
     console.log("Pobieram listę tabel...");
+    setStatus("Pobieranie listy tabel...");
     setError(null);
-    return invoke<string[]>("get_table_names")
+    invoke<string[]>("get_table_names")
       .then((names) => {
         console.log("Sukces! Pobrano tabele.", names);
         setTableNames(names);
-        setIsConnected(true);
-        if (pollingRef.current) {
-          clearInterval(pollingRef.current);
+        setStatus("");
+        setIsReady(true);
+        if (names.length > 0) {
+          // Automatycznie wybierz pierwszą tabelę, jeśli żadna nie jest aktywna
+          if (!activeTable) {
+            handleTableSelect(names[0]);
+          }
+        } else {
+          setStatus("Baza danych nie zawiera tabel.");
         }
       })
       .catch((err) => {
         console.error("Błąd podczas pobierania tabel:", err);
-        if (isConnected) {
-          setError(err.toString());
-        }
-        throw err;
+        const errorMsg = err.toString();
+        setError(errorMsg);
+        setStatus(`Błąd: ${errorMsg}`);
+        setIsReady(false); // Pozostań w stanie ładowania/błędu
       });
   };
 
   const handleTableSelect = (tableName: string) => {
     setError(null);
     setActiveTable(tableName);
+    setStatus(`Ładowanie danych tabeli ${tableName}...`);
+    setTableContent([]); // Wyczyść stare dane
 
     invoke<string[]>("get_table_columns", { tableName })
       .then((columns) => {
@@ -44,47 +55,30 @@ function App() {
       })
       .then((content) => {
         setTableContent(content);
+        setStatus("");
       })
       .catch((err) => {
-        setError(err.toString());
+        const errorMsg = err.toString();
+        setError(errorMsg);
         setColumnNames([]);
         setTableContent([]);
+        setStatus(`Błąd ładowania tabeli ${tableName}: ${errorMsg}`);
       });
   };
 
   useEffect(() => {
-    const tryFetch = () => {
-      fetchTableNames().catch(() => {
-        console.log("Nie udało się połączyć, próbuję ponownie...");
-      });
-    };
-
-    tryFetch();
-
-    pollingRef.current = window.setInterval(tryFetch, 200);
-
-    const timeoutId = window.setTimeout(() => {
-      if (!isConnected) {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        setError("Nie udało się połączyć z bazą danych w ciągu 5 sekund.");
-        console.error("Timeout: Nie udało się połączyć z bazą.");
-      }
-    }, 5000);
+    let unlistenPromise = listen("database-connected", () => {
+      console.log("Odebrano zdarzenie database-connected");
+      fetchTableNames();
+    });
 
     return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-      }
-      clearTimeout(timeoutId);
+      unlistenPromise.then((unlistenFn) => unlistenFn());
     };
   }, []);
 
-  if (!isConnected) {
-    return (
-      <div className="status-container">
-        {error ? `Błąd: ${error}` : "Łączenie z bazą danych..."}
-      </div>
-    );
+  if (!isReady) {
+    return <div className="status-container">{status}</div>;
   }
 
   return (
@@ -92,7 +86,6 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-tables">
           <h3>Tabele</h3>
-          {error && <div className="error-message">{error}</div>}
           <ul>
             {tableNames.map((name) => (
               <li key={name}>
@@ -119,11 +112,13 @@ function App() {
           </h1>
           <div className="action-buttons">
             <button className="btn" onClick={fetchTableNames}>
-              Odśwież tabele
+              Odśwież listę tabel
             </button>
           </div>
         </header>
         <div className="table-container">
+          {error && <p className="error-message">{error}</p>}
+          {status && !error && <p>{status}</p>}
           {tableContent.length > 0 ? (
             <table className="data-table">
               <thead>
@@ -138,7 +133,11 @@ function App() {
                   <tr key={rowIndex}>
                     {columnNames.map((col) => (
                       <td key={`${rowIndex}-${col}`}>
-                        {String(row[col] ?? "")}
+                        {row[col] === null || row[col] === undefined ? (
+                          <em>NULL</em>
+                        ) : (
+                          String(row[col])
+                        )}
                       </td>
                     ))}
                   </tr>
@@ -146,10 +145,11 @@ function App() {
               </tbody>
             </table>
           ) : (
+            !status && activeTable && <p>Tabela jest pusta.</p>
+          )}
+          {!activeTable && (
             <p>
-              {activeTable
-                ? "Ładowanie danych..."
-                : "Wybierz tabelę z panelu bocznego, aby wyświetlić jej zawartość."}
+              Wybierz tabelę z panelu bocznego, aby wyświetlić jej zawartość.
             </p>
           )}
         </div>

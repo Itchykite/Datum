@@ -9,7 +9,7 @@ use sqlx::{
     },
     Column, Row, TypeInfo, ValueRef,
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Deserialize)]
 pub struct ConnectionDetails {
@@ -47,6 +47,7 @@ pub async fn connect_db(
     if let Some(main_window) = app_handle.get_webview_window("main") {
         main_window.show().unwrap();
         main_window.maximize().unwrap();
+        main_window.emit("database-connected", ()).unwrap();
     }
 
     if let Some(login_window) = app_handle.get_webview_window("login") {
