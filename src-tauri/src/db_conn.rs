@@ -2,13 +2,14 @@ use crate::DbConnection;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{
-    mysql::MySqlPoolOptions,
+    mysql::{MySqlPoolOptions, MySqlQueryResult},
     types::{
         chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc},
         BigDecimal,
     },
     Column, Row, TypeInfo, ValueRef,
 };
+use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Deserialize)]
@@ -154,4 +155,83 @@ pub async fn get_table_content(
         .collect();
 
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_fields_from_table(
+    table_name: String,
+    db_conn: State<'_, DbConnection>,
+) -> Result<Vec<String>, String> {
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
+    let allowed_tables = get_table_names(db_conn).await?;
+    if !allowed_tables.contains(&table_name) {
+        return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
+    }
+
+    let query = format!("DESCRIBE `{}`", table_name);
+    let rows = sqlx::query(&query)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let field_names: Vec<String> = rows.into_iter().map(|row| row.get("Field")).collect();
+
+    Ok(field_names)
+}
+
+#[tauri::command]
+pub async fn insert_record(
+    table_name: String,
+    record: HashMap<String, serde_json::Value>,
+    db_conn: State<'_, DbConnection>,
+) -> Result<(), String> {
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
+    let allowed_tables = get_table_names(db_conn).await?;
+    if !allowed_tables.contains(&table_name) {
+        return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
+    }
+
+    if record.is_empty() {
+        return Err("Brak danych do wstawienia".into());
+    }
+
+    let columns: Vec<String> = record.keys().cloned().collect();
+    let placeholders: Vec<String> = columns.iter().map(|_| "?".to_string()).collect();
+
+    let query = format!(
+        "INSERT INTO `{}` ({}) VALUES ({})",
+        table_name,
+        columns.join(", "),
+        placeholders.join(", ")
+    );
+
+    let mut q = sqlx::query(&query);
+    for col in &columns {
+        match &record[col] {
+            serde_json::Value::Null => q = q.bind(None::<String>),
+            serde_json::Value::String(s) => q = q.bind(s),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    q = q.bind(i);
+                } else if let Some(f) = n.as_f64() {
+                    q = q.bind(f);
+                } else {
+                    q = q.bind(n.to_string());
+                }
+            }
+            serde_json::Value::Bool(b) => q = q.bind(*b),
+            _ => q = q.bind(record[col].to_string()),
+        }
+    }
+
+    q.execute(&pool).await.map_err(|e| e.to_string())?;
+    Ok(())
 }

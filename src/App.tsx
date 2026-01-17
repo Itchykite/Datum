@@ -13,6 +13,7 @@ function App() {
     "Oczekiwanie na połączenie z bazą danych...",
   );
   const [isReady, setIsReady] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const fetchTableNames = () => {
     console.log("Pobieram listę tabel...");
@@ -25,7 +26,6 @@ function App() {
         setStatus("");
         setIsReady(true);
         if (names.length > 0) {
-          // Automatycznie wybierz pierwszą tabelę, jeśli żadna nie jest aktywna
           if (!activeTable) {
             handleTableSelect(names[0]);
           }
@@ -38,7 +38,7 @@ function App() {
         const errorMsg = err.toString();
         setError(errorMsg);
         setStatus(`Błąd: ${errorMsg}`);
-        setIsReady(false); // Pozostań w stanie ładowania/błędu
+        setIsReady(false);
       });
   };
 
@@ -46,7 +46,7 @@ function App() {
     setError(null);
     setActiveTable(tableName);
     setStatus(`Ładowanie danych tabeli ${tableName}...`);
-    setTableContent([]); // Wyczyść stare dane
+    setTableContent([]);
 
     invoke<string[]>("get_table_columns", { tableName })
       .then((columns) => {
@@ -66,6 +66,10 @@ function App() {
       });
   };
 
+  const insertRecord = (tableName: string, record: Record<string, any>) => {
+    return invoke("insert_record", { tableName, record });
+  };
+
   useEffect(() => {
     let unlistenPromise = listen("database-connected", () => {
       console.log("Odebrano zdarzenie database-connected");
@@ -82,79 +86,138 @@ function App() {
   }
 
   return (
-    <div className="database-manager">
-      <aside className="sidebar">
-        <div className="sidebar-tables">
-          <h3>Tabele</h3>
-          <ul>
-            {tableNames.map((name) => (
-              <li key={name}>
+    <>
+      {isModalOpen && (
+        <div className="popup-overlay">
+          <div className="popup-modal">
+            <h2>Dodaj rekord do tabeli {activeTable}</h2>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                const record: Record<string, any> = {};
+                columnNames.forEach((col) => {
+                  const value = formData.get(col);
+                  record[col] = value === "" ? null : value;
+                });
+                try {
+                  await insertRecord(activeTable, record);
+                  alert("Rekord dodany pomyślnie!");
+                  handleTableSelect(activeTable);
+                  setIsModalOpen(false);
+                } catch (err) {
+                  alert("Błąd podczas dodawania rekordu: " + err);
+                }
+              }}
+            >
+              {columnNames.map((col) => (
+                <div key={col} className="form-group">
+                  <label htmlFor={col}>{col}:</label>
+                  <input type="text" id={col} name={col} />
+                </div>
+              ))}
+
+              <div className="popup-actions">
+                <button type="submit">Dodaj rekord</button>
+                <button onClick={() => setIsModalOpen(false)}>Zamknij</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className="database-manager">
+        <aside className="sidebar">
+          <div className="sidebar-operations">
+            <h3>Operacje</h3>
+            <ul>
+              <li>
                 <a
                   href="#"
-                  className={activeTable === name ? "active-table" : ""}
                   onClick={(e) => {
                     e.preventDefault();
-                    handleTableSelect(name);
+                    setIsModalOpen(true);
                   }}
                 >
-                  {name}
+                  Dodaj rekord
                 </a>
               </li>
-            ))}
-          </ul>
-        </div>
-      </aside>
-
-      <main className="main-content">
-        <header className="main-header">
-          <h1>
-            {activeTable ? `Tabela: ${activeTable}` : "Wybierz tabelę z listy"}
-          </h1>
-          <div className="action-buttons">
-            <button className="btn" onClick={fetchTableNames}>
-              Odśwież listę tabel
-            </button>
+            </ul>
           </div>
-        </header>
-        <div className="table-container">
-          {error && <p className="error-message">{error}</p>}
-          {status && !error && <p>{status}</p>}
-          {tableContent.length > 0 ? (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {columnNames.map((col) => (
-                    <th key={col}>{col}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {tableContent.map((row, rowIndex) => (
-                  <tr key={rowIndex}>
+          <div className="sidebar-tables">
+            <h3>Tabele</h3>
+            <ul>
+              {tableNames.map((name) => (
+                <li key={name}>
+                  <a
+                    href="#"
+                    className={activeTable === name ? "active-table" : ""}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleTableSelect(name);
+                    }}
+                  >
+                    {name}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </aside>
+
+        <main className="main-content">
+          <header className="main-header">
+            <h1>
+              {activeTable
+                ? `Tabela: ${activeTable}`
+                : "Wybierz tabelę z listy"}
+            </h1>
+            <div className="action-buttons">
+              <button className="btn" onClick={fetchTableNames}>
+                Odśwież listę tabel
+              </button>
+            </div>
+          </header>
+          <div className="table-container">
+            {error && <p className="error-message">{error}</p>}
+            {status && !error && <p>{status}</p>}
+            {tableContent.length > 0 ? (
+              <table className="data-table">
+                <thead>
+                  <tr>
                     {columnNames.map((col) => (
-                      <td key={`${rowIndex}-${col}`}>
-                        {row[col] === null || row[col] === undefined ? (
-                          <em>NULL</em>
-                        ) : (
-                          String(row[col])
-                        )}
-                      </td>
+                      <th key={col}>{col}</th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            !status && activeTable && <p>Tabela jest pusta.</p>
-          )}
-          {!activeTable && (
-            <p>
-              Wybierz tabelę z panelu bocznego, aby wyświetlić jej zawartość.
-            </p>
-          )}
-        </div>
-      </main>
-    </div>
+                </thead>
+                <tbody>
+                  {tableContent.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {columnNames.map((col) => (
+                        <td key={`${rowIndex}-${col}`}>
+                          {row[col] === null || row[col] === undefined ? (
+                            <em>NULL</em>
+                          ) : (
+                            String(row[col])
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              !status && activeTable && <p>Tabela jest pusta.</p>
+            )}
+            {!activeTable && (
+              <p>
+                Wybierz tabelę z panelu bocznego, aby wyświetlić jej zawartość.
+              </p>
+            )}
+          </div>
+        </main>
+      </div>
+    </>
   );
 }
 

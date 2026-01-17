@@ -5,10 +5,10 @@ import "./Login.css";
 
 function Login() {
   const [host, setHost] = useState("localhost");
-  const [port, setPort] = useState("3306");
+  const [port, setPort] = useState("3307");
   const [user, setUser] = useState("root");
-  const [password, setPassword] = useState("");
-  const [dbName, setDbName] = useState("");
+  const [password, setPassword] = useState("root");
+  const [dbName, setDbName] = useState("warehouse_db");
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
 
