@@ -13,7 +13,8 @@ function App() {
     "Oczekiwanie na połączenie z bazą danych...",
   );
   const [isReady, setIsReady] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAddRecordModalOpen, setIsAddRecordModalOpen] = useState(false);
+  const [isUpdateRecordModalOpen, setIsUpdateRecordModalOpen] = useState(false);
 
   const fetchTableNames = () => {
     console.log("Pobieram listę tabel...");
@@ -70,6 +71,14 @@ function App() {
     return invoke("insert_record", { tableName, record });
   };
 
+  const updateRecord = (
+    tableName: string,
+    recordId: any,
+    updatedRecord: Record<string, any>,
+  ) => {
+    return invoke("update_record", { tableName, recordId, updatedRecord });
+  };
+
   useEffect(() => {
     let unlistenPromise = listen("database-connected", () => {
       console.log("Odebrano zdarzenie database-connected");
@@ -87,7 +96,8 @@ function App() {
 
   return (
     <>
-      {isModalOpen && (
+      {/* Modal dodawnaia rekordu */}
+      {isAddRecordModalOpen && (
         <div className="popup-overlay">
           <div className="popup-modal">
             <h2>Dodaj rekord do tabeli {activeTable}</h2>
@@ -104,7 +114,7 @@ function App() {
                   await insertRecord(activeTable, record);
                   alert("Rekord dodany pomyślnie!");
                   handleTableSelect(activeTable);
-                  setIsModalOpen(false);
+                  setIsAddRecordModalOpen(false);
                 } catch (err) {
                   alert("Błąd podczas dodawania rekordu: " + err);
                 }
@@ -119,13 +129,65 @@ function App() {
 
               <div className="popup-actions">
                 <button type="submit">Dodaj rekord</button>
-                <button onClick={() => setIsModalOpen(false)}>Zamknij</button>
+                <button onClick={() => setIsAddRecordModalOpen(false)}>
+                  Zamknij
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
+      {/* Modal aktualizacji rekordu */}
+      {isUpdateRecordModalOpen && (
+        <div className="popup-overlay">
+          <div className="popup-modal">
+            <h2>Aktualizuj rekord w tabeli {activeTable}</h2>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                const recordId = formData.get("recordId");
+                const updatedRecord: Record<string, any> = {};
+                columnNames.forEach((col) => {
+                  if (col !== "id") {
+                    const value = formData.get(col);
+                    updatedRecord[col] = value === "" ? null : value;
+                  }
+                });
+                try {
+                  await updateRecord(activeTable, recordId, updatedRecord);
+                  alert("Rekord zaktualizowany pomyślnie!");
+                  handleTableSelect(activeTable);
+                  setIsUpdateRecordModalOpen(false);
+                } catch (err) {
+                  alert("Błąd podczas aktualizacji rekordu: " + err);
+                }
+              }}
+            >
+              <div className="form-group">
+                <label htmlFor="recordId">ID rekordu do aktualizacji:</label>
+                <input type="text" id="recordId" name="recordId" required />
+              </div>
+              {columnNames
+                .filter((col) => col !== "id")
+                .map((col) => (
+                  <div key={col} className="form-group">
+                    <label htmlFor={col}>{col}:</label>
+                    <input type="text" id={col} name={col} />
+                  </div>
+                ))}
 
+              <div className="popup-actions">
+                <button type="submit">Aktualizuj rekord</button>
+                <button onClick={() => setIsUpdateRecordModalOpen(false)}>
+                  Zamknij
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Główny interfejs zarządzania bazą danych */}
       <div className="database-manager">
         <aside className="sidebar">
           <div className="sidebar-operations">
@@ -136,10 +198,21 @@ function App() {
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
-                    setIsModalOpen(true);
+                    setIsAddRecordModalOpen(true);
                   }}
                 >
                   Dodaj rekord
+                </a>
+              </li>
+              <li>
+                <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsUpdateRecordModalOpen(true);
+                  }}
+                >
+                  Aktualizuj rekord
                 </a>
               </li>
             </ul>

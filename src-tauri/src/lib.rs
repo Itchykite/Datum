@@ -20,7 +20,8 @@ pub fn run() {
             db_conn::get_table_names,
             db_conn::get_table_columns,
             db_conn::get_table_content,
-            db_conn::insert_record
+            db_conn::insert_record,
+            db_conn::update_record
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

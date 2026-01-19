@@ -2,7 +2,7 @@ use crate::DbConnection;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{
-    mysql::{MySqlPoolOptions, MySqlQueryResult},
+    mysql::MySqlPoolOptions,
     types::{
         chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc},
         BigDecimal,
@@ -232,6 +232,62 @@ pub async fn insert_record(
         }
     }
 
+    q.execute(&pool).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_record(
+    table_name: String,
+    record_id: String,
+    updated_record: HashMap<String, serde_json::Value>,
+    db_conn: State<'_, DbConnection>,
+) -> Result<(), String> {
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
+    let allowed_tables = get_table_names(db_conn).await?;
+    if !allowed_tables.contains(&table_name) {
+        return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
+    }
+
+    if updated_record.is_empty() {
+        return Err("Brak danych do aktualizacji".into());
+    }
+
+    let set_clauses: Vec<String> = updated_record
+        .keys()
+        .map(|col| format!("{} = ?", col))
+        .collect();
+
+    let query = format!(
+        "UPDATE `{}` SET {} WHERE id = ?",
+        table_name,
+        set_clauses.join(", ")
+    );
+
+    let mut q = sqlx::query(&query);
+    for col in updated_record.keys() {
+        match &updated_record[col] {
+            serde_json::Value::Null => q = q.bind(None::<String>),
+            serde_json::Value::String(s) => q = q.bind(s),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    q = q.bind(i);
+                } else if let Some(f) = n.as_f64() {
+                    q = q.bind(f);
+                } else {
+                    q = q.bind(n.to_string());
+                }
+            }
+            serde_json::Value::Bool(b) => q = q.bind(*b),
+            _ => q = q.bind(updated_record[col].to_string()),
+        }
+    }
+
+    q = q.bind(record_id);
     q.execute(&pool).await.map_err(|e| e.to_string())?;
     Ok(())
 }
