@@ -24,6 +24,30 @@ body {
   padding: 20px 0;
 }
 
+.sidebar-tables {
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+.sidebar-footer {
+  padding: 20px;
+  border-top: 1px solid #34495e;
+}
+
+.sidebar-footer a {
+  display: block;
+  padding: 12px 20px;
+  margin: -12px -20px;
+  color: #e74c3c;
+  text-decoration: none;
+  transition: background-color 0.2s;
+  font-weight: 500;
+}
+
+.sidebar-footer a:hover {
+  background-color: #34495e;
+}
+
 .sidebar-header {
   padding: 0 20px;
   border-bottom: 1px solid #34495e;
@@ -78,10 +102,10 @@ body {
   font-size: 0.9rem;
 }
 
-.sidebar-tables li.active-table a,
-.sidebar-operations li.active-operation a {
+.sidebar-tables li.active-table a {
   color: #1abc9c;
   font-weight: 500;
+  background-color: #34495e;
 }
 
 .main-content {
@@ -123,39 +147,11 @@ body {
   border-color: #b3b3b3;
 }
 
-.action-buttons .btn.btn-primary {
-  background-color: #1abc9c;
-  color: white;
-  border-color: #1abc9c;
-}
-
-.action-buttons .btn.btn-primary:hover {
-  background-color: #16a085;
-  border-color: #16a085;
-}
-
-.btn-icon {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1.2rem;
-  padding: 5px;
-  margin: 0 5px;
-}
-
-.btn-icon.btn-danger {
-  color: #e74c3c;
-}
-
-.btn-icon.btn-danger:hover {
-  color: #c0392b;
-}
-
 .table-container {
   background-color: #fff;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-  overflow: hidden;
+  overflow: auto;
 }
 
 .data-table {
@@ -176,6 +172,8 @@ body {
   color: #555;
   font-size: 0.9rem;
   text-transform: uppercase;
+  position: sticky;
+  top: 0;
 }
 
 .data-table tbody tr:last-child td {
@@ -186,17 +184,11 @@ body {
   background-color: #f5f5f5;
 }
 
-.loading-container,
-.error-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
-  font-size: 1.2rem;
-  color: #555;
+.data-table .selected-row {
+  background-color: #e8f5e9; /* Delikatny zielony dla zaznaczenia */
 }
-.error-container {
-  color: #e74c3c;
+.data-table .selected-row:hover {
+  background-color: #dceddd;
 }
 
 .status-container {
@@ -208,14 +200,15 @@ body {
   color: #555;
 }
 
+/* --- MODALE --- */
 .popup-overlay {
-  position: fixed !important;
+  position: fixed;
   inset: 0;
   display: flex;
   justify-content: center;
   align-items: center;
   background: rgba(0, 0, 0, 0.55);
-  z-index: 9999;
+  z-index: 999;
 }
 
 .popup-modal {
@@ -226,42 +219,13 @@ body {
   max-width: 420px;
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
   animation: popupFade 0.25s ease-out;
-}
-
-.popup-modal h2 {
-  margin: 0 0 10px;
-  font-size: 1.4rem;
-}
-
-.popup-modal p {
-  opacity: 0.85;
-  line-height: 1.5;
-}
-
-.popup-modal form {
-  margin-top: 20px;
-}
-
-.popup-modal {
   max-height: 85vh;
   overflow-y: auto;
 }
 
-.popup-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 20px;
-}
-
-.popup-actions button {
-  background: #3b82f6;
-  border: none;
-  color: white;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  cursor: pointer;
-  transition: background 0.2s ease;
+.popup-modal h2 {
+  margin: 0 0 20px;
+  font-size: 1.4rem;
 }
 
 .popup-actions {
@@ -269,6 +233,8 @@ body {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid #e5e7eb;
 }
 
 .popup-actions button {
@@ -279,8 +245,8 @@ body {
   border: none;
   transition:
     background-color 0.2s ease,
-    transform 0.1s ease,
-    box-shadow 0.1s ease;
+    transform 0.1s ease;
+  font-weight: 500;
 }
 
 .popup-actions button:active {
@@ -316,10 +282,11 @@ body {
   }
 }
 
+/* --- NOWE STYLE DLA FORMULARZY --- */
 .form-group {
   display: flex;
   flex-direction: column;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .form-group label {
@@ -330,7 +297,7 @@ body {
   text-transform: capitalize;
 }
 
-.form-group input {
+.form-input {
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid #d1d5db;
@@ -341,19 +308,110 @@ body {
     background-color 0.2s ease;
 }
 
-.form-group input:focus {
+.form-input:focus {
   outline: none;
   border-color: #1abc9c;
   box-shadow: 0 0 0 3px rgba(26, 188, 156, 0.2);
-  background-color: #fff;
 }
 
-.form-group input:hover {
+.form-input:hover {
   border-color: #b0b7bf;
 }
 
-.disabled-link {
-  color: #999;
+.form-input[readonly] {
+  background-color: #f0f2f5;
+  cursor: not-allowed;
+}
+
+select.form-input {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 0.5rem center;
+  background-repeat: no-repeat;
+  background-size: 1.5em 1.5em;
+  padding-right: 2.5rem;
+}
+
+/* --- INNE --- */
+.disabled-link,
+.disabled-link:hover {
+  color: #7f8c8d !important;
   pointer-events: none;
   cursor: not-allowed;
+  background-color: transparent !important;
+}
+
+.error-message {
+  color: #e74c3c;
+  padding: 20px;
+  background-color: #fadbd8;
+  border-radius: 8px;
+}
+
+/* --- NOWE STYLE DLA POWIADOMIEŃ --- */
+.notification {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 15px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  z-index: 1000;
+  transform: translateX(calc(100% + 20px));
+  transition: transform 0.4s ease-in-out;
+  overflow: hidden;
+  max-width: 350px;
+}
+
+.notification.show {
+  transform: translateX(0);
+}
+
+.notification.success {
+  background-color: #27ae60; /* Bardziej stonowana zieleń */
+}
+
+.notification.error {
+  background-color: #c0392b; /* Bardziej stonowana czerwień */
+}
+
+.notification-content {
+  flex-grow: 1;
+}
+
+.notification-close-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.7;
+  font-size: 24px;
+  margin-left: 15px;
+  cursor: pointer;
+}
+.notification-close-btn:hover {
+  opacity: 1;
+}
+
+.notification-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 4px;
+  width: 100%;
+  background-color: rgba(255, 255, 255, 0.4);
+  animation: progress-bar 4s linear;
+}
+
+@keyframes progress-bar {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
 }

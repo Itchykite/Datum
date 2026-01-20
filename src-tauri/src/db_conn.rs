@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{
-    mysql::MySqlPoolOptions,
+    mysql::{MySqlPool, MySqlPoolOptions},
     types::{
         chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc},
         BigDecimal,
     },
     Column, Row, TypeInfo, ValueRef,
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::DbConnection;
 
@@ -25,10 +25,60 @@ pub struct ConnectionDetails
     db_name: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ForeignKeyInfo
+{
+    pub column_name: String,
+    pub referenced_table: String,
+    pub referenced_column: String,
+    pub descriptive_column: String,
+    pub join_alias: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ForeignKeyValue
+{
+    pub id: Value,
+    pub display: String,
+}
+
 #[tauri::command]
-pub async fn connect_db(
+pub async fn disconnect_db<R: Runtime>(app_handle: AppHandle<R>, db_conn: State<'_, DbConnection>)
+    -> Result<(), String>
+{
+    let mut pool_guard = db_conn.0.lock().await;
+    if let Some(pool) = pool_guard.take()
+    {
+        pool.close().await;
+    }
+
+    if let Some(login_window) = app_handle.get_webview_window("login")
+    {
+        login_window.show().map_err(|e| e.to_string())?;
+        login_window.set_focus().map_err(|e| e.to_string())?;
+    }
+    else
+    {
+        tauri::WebviewWindowBuilder::new(&app_handle, "login", tauri::WebviewUrl::App("login.html".into()))
+            .title("Datum - Logowanie")
+            .inner_size(400.0, 550.0)
+            .resizable(false)
+            .build()
+            .map_err(|e| e.to_string())?;
+    }
+
+    if let Some(main_window) = app_handle.get_webview_window("main")
+    {
+        main_window.hide().map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn connect_db<R: Runtime>(
     details: ConnectionDetails,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     db_conn: State<'_, DbConnection>,
 ) -> Result<(), String>
 {
@@ -51,17 +101,125 @@ pub async fn connect_db(
 
     if let Some(main_window) = app_handle.get_webview_window("main")
     {
-        main_window.show().unwrap();
-        main_window.maximize().unwrap();
-        main_window.emit("database-connected", ()).unwrap();
+        main_window.show().map_err(|e| e.to_string())?;
+        main_window.maximize().map_err(|e| e.to_string())?;
+        main_window.emit("database-connected", ()).map_err(|e| e.to_string())?;
     }
 
     if let Some(login_window) = app_handle.get_webview_window("login")
     {
-        login_window.close().unwrap();
+        login_window.hide().map_err(|e| e.to_string())?;
     }
 
     Ok(())
+}
+
+async fn get_foreign_keys(table_name: &str, pool: &MySqlPool) -> Result<HashMap<String, ForeignKeyInfo>, sqlx::Error>
+{
+    let query = "
+        SELECT
+            kcu.COLUMN_NAME,
+            kcu.REFERENCED_TABLE_NAME,
+            kcu.REFERENCED_COLUMN_NAME
+        FROM
+            information_schema.KEY_COLUMN_USAGE AS kcu
+        WHERE
+            kcu.TABLE_SCHEMA = DATABASE()
+            AND kcu.TABLE_NAME = ?
+            AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+    ";
+
+    let rows = sqlx::query(query).bind(table_name).fetch_all(pool).await?;
+    let mut fks = HashMap::new();
+
+    for row in rows
+    {
+        let column_name: String = row.try_get(0)?;
+        let referenced_table: String = row.try_get(1)?;
+        let referenced_column: String = row.try_get(2)?;
+
+        let descriptive_column = find_descriptive_column(pool, &referenced_table)
+            .await
+            .unwrap_or_else(|_| referenced_column.clone());
+
+        let join_alias = format!("{}__{}", column_name, descriptive_column);
+
+        fks.insert(
+            column_name.clone(),
+            ForeignKeyInfo {
+                column_name,
+                referenced_table,
+                referenced_column,
+                descriptive_column,
+                join_alias,
+            },
+        );
+    }
+    Ok(fks)
+}
+
+async fn find_descriptive_column(pool: &MySqlPool, table_name: &str) -> Result<String, sqlx::Error>
+{
+    let columns_query =
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
+    let columns: Vec<String> = sqlx::query(columns_query)
+        .bind(table_name)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+
+    let preferred_names = ["name", "username", "title", "label", "nazwa", "login", "tytul"];
+    for name in &preferred_names
+    {
+        if let Some(found) = columns.iter().find(|c| c.eq_ignore_ascii_case(name))
+        {
+            return Ok(found.clone());
+        }
+    }
+
+    Ok(columns.get(1).unwrap_or(&columns[0]).clone())
+}
+
+fn row_to_json_value(row: &sqlx::mysql::MySqlRow, i: usize) -> Result<Value, sqlx::Error>
+{
+    let raw_val = row.try_get_raw(i)?;
+    if raw_val.is_null()
+    {
+        return Ok(Value::Null);
+    }
+
+    let type_info = raw_val.type_info();
+    let val = match type_info.name()
+    {
+        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR" => json!(row.try_get::<Option<i64>, _>(i)?),
+        "FLOAT" | "DOUBLE" => json!(row.try_get::<Option<f64>, _>(i)?),
+        "DECIMAL" | "NEWDECIMAL" => json!(row.try_get::<Option<BigDecimal>, _>(i)?.map(|d| d.to_string())),
+        "DATETIME" => json!(row.try_get::<Option<NaiveDateTime>, _>(i)?.map(|dt| dt.to_string())),
+        "TIMESTAMP" => json!(row.try_get::<Option<DateTime<Utc>>, _>(i)?.map(|dt| dt.to_rfc3339())),
+        "DATE" => json!(row.try_get::<Option<NaiveDate>, _>(i)?.map(|d| d.to_string())),
+        "TIME" => json!(row.try_get::<Option<NaiveTime>, _>(i)?.map(|t| t.to_string())),
+        "BOOLEAN" => json!(row.try_get::<Option<bool>, _>(i)?),
+        _ => json!(row.try_get::<Option<String>, _>(i)?),
+    };
+    Ok(val)
+}
+
+fn rows_to_json(rows: Vec<sqlx::mysql::MySqlRow>) -> Result<Vec<Value>, String>
+{
+    rows.into_iter()
+        .map(|row| {
+            let mut obj = serde_json::Map::new();
+            for (i, col) in row.columns().iter().enumerate()
+            {
+                let col_name = col.name();
+                let val = row_to_json_value(&row, i).map_err(|e| e.to_string())?;
+                obj.insert(col_name.to_string(), val);
+            }
+            Ok(Value::Object(obj))
+        })
+        .collect::<Result<Vec<Value>, String>>()
 }
 
 #[tauri::command]
@@ -80,7 +238,7 @@ pub async fn get_table_names(db_conn: State<'_, DbConnection>) -> Result<Vec<Str
 }
 
 #[tauri::command]
-pub async fn get_table_columns(table_name: String, db_conn: State<'_, DbConnection>) -> Result<Vec<String>, String>
+pub async fn get_table_columns(table_name: String, db_conn: State<'_, DbConnection>) -> Result<Value, String>
 {
     let pool = {
         let pool_guard = db_conn.0.lock().await;
@@ -88,12 +246,54 @@ pub async fn get_table_columns(table_name: String, db_conn: State<'_, DbConnecti
     };
 
     let sql = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
-    sqlx::query(sql)
-        .bind(table_name)
+    let column_names: Vec<String> = sqlx::query(sql)
+        .bind(&table_name)
         .fetch_all(&pool)
         .await
-        .map(|rows| rows.into_iter().map(|row| row.get(0)).collect())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+
+    let foreign_keys = get_foreign_keys(&table_name, &pool).await.map_err(|e| e.to_string())?;
+
+    Ok(json!({
+        "columns": column_names,
+        "foreignKeys": foreign_keys
+    }))
+}
+
+#[tauri::command]
+pub async fn get_foreign_key_values(
+    fk_info: ForeignKeyInfo,
+    db_conn: State<'_, DbConnection>,
+) -> Result<Vec<ForeignKeyValue>, String>
+{
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
+    let query_str = format!(
+        "SELECT `{}` as id, `{}` as display FROM `{}` ORDER BY `{}` ASC",
+        fk_info.referenced_column, fk_info.descriptive_column, fk_info.referenced_table, fk_info.descriptive_column
+    );
+
+    let rows = sqlx::query(&query_str)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    rows.iter()
+        .map(|row| {
+            let id_val = row_to_json_value(row, 0).map_err(|e| e.to_string())?;
+            let display_val: String = row.try_get("display").map_err(|e| e.to_string())?;
+            Ok(ForeignKeyValue {
+                id: id_val,
+                display: display_val,
+            })
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -104,62 +304,43 @@ pub async fn get_table_content(table_name: String, db_conn: State<'_, DbConnecti
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
-    let allowed_tables = get_table_names(db_conn).await?;
-    if !allowed_tables.contains(&table_name)
+    let foreign_keys = get_foreign_keys(&table_name, &pool)
+        .await
+        .map_err(|e| format!("Błąd podczas pobierania kluczy obcych: {}", e))?;
+
+    let mut select_clauses = vec!["`main_table`.*".to_string()];
+    let mut join_clauses = Vec::new();
+
+    for (i, fk_info) in foreign_keys.values().enumerate()
     {
-        return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
+        let join_table_alias = format!("jt{}", i);
+        select_clauses.push(format!(
+            "`{}`.`{}` AS `{}`",
+            join_table_alias, fk_info.descriptive_column, fk_info.join_alias
+        ));
+        join_clauses.push(format!(
+            "LEFT JOIN `{}` AS `{}` ON `main_table`.`{}` = `{}`.`{}`",
+            fk_info.referenced_table,
+            join_table_alias,
+            fk_info.column_name,
+            join_table_alias,
+            fk_info.referenced_column
+        ));
     }
 
-    let query = format!("SELECT * FROM `{}`", table_name);
-    let rows = sqlx::query(&query).fetch_all(&pool).await.map_err(|e| e.to_string())?;
+    let query_str = format!(
+        "SELECT {} FROM `{}` AS `main_table` {}",
+        select_clauses.join(", "),
+        table_name,
+        join_clauses.join(" ")
+    );
 
-    let result: Vec<Value> = rows
-        .into_iter()
-        .map(|row| {
-            let mut obj = serde_json::Map::new();
-            for (i, col) in row.columns().iter().enumerate()
-            {
-                let col_name = col.name();
-                let raw_val = row.try_get_raw(i).unwrap();
+    let rows = sqlx::query(&query_str)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
-                let val: Value = if raw_val.is_null()
-                {
-                    Value::Null
-                }
-                else
-                {
-                    match col.type_info().name()
-                    {
-                        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR" =>
-                        {
-                            json!(row.get::<Option<i64>, _>(i))
-                        }
-                        "FLOAT" | "DOUBLE" => json!(row.get::<Option<f64>, _>(i)),
-                        "DECIMAL" | "NEWDECIMAL" =>
-                        {
-                            json!(row.get::<Option<BigDecimal>, _>(i).map(|d| d.to_string()))
-                        }
-                        "ENUM" => json!(row.get::<Option<String>, _>(i)),
-
-                        "DATETIME" => json!(row.get::<Option<NaiveDateTime>, _>(i).map(|dt| dt.to_string())),
-                        "TIMESTAMP" =>
-                        {
-                            json!(row.get::<Option<DateTime<Utc>>, _>(i).map(|dt| dt.to_rfc3339()))
-                        }
-                        "DATE" => json!(row.get::<Option<NaiveDate>, _>(i).map(|d| d.to_string())),
-                        "TIME" => json!(row.get::<Option<NaiveTime>, _>(i).map(|t| t.to_string())),
-
-                        "BOOLEAN" => json!(row.get::<Option<bool>, _>(i)),
-                        _ => json!(row.get::<Option<String>, _>(i)),
-                    }
-                };
-                obj.insert(col_name.to_string(), val);
-            }
-            Value::Object(obj)
-        })
-        .collect();
-
-    Ok(result)
+    rows_to_json(rows)
 }
 
 #[tauri::command]
@@ -170,12 +351,6 @@ pub async fn get_fields_from_table(table_name: String, db_conn: State<'_, DbConn
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
-
-    let allowed_tables = get_table_names(db_conn).await?;
-    if !allowed_tables.contains(&table_name)
-    {
-        return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
-    }
 
     let query = format!("DESCRIBE `{}`", table_name);
     let rows = sqlx::query(&query).fetch_all(&pool).await.map_err(|e| e.to_string())?;
@@ -197,12 +372,6 @@ pub async fn insert_record(
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
-    let allowed_tables = get_table_names(db_conn).await?;
-    if !allowed_tables.contains(&table_name)
-    {
-        return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
-    }
-
     if record.is_empty()
     {
         return Err("Brak danych do wstawienia".into());
@@ -214,7 +383,11 @@ pub async fn insert_record(
     let query = format!(
         "INSERT INTO `{}` ({}) VALUES ({})",
         table_name,
-        columns.join(", "),
+        columns
+            .iter()
+            .map(|c| format!("`{}`", c))
+            .collect::<Vec<_>>()
+            .join(", "),
         placeholders.join(", ")
     );
 
@@ -223,9 +396,9 @@ pub async fn insert_record(
     {
         match &record[col]
         {
-            serde_json::Value::Null => q = q.bind(None::<String>),
-            serde_json::Value::String(s) => q = q.bind(s),
-            serde_json::Value::Number(n) =>
+            Value::Null => q = q.bind(None::<String>),
+            Value::String(s) => q = q.bind(s),
+            Value::Number(n) =>
             {
                 if let Some(i) = n.as_i64()
                 {
@@ -240,7 +413,7 @@ pub async fn insert_record(
                     q = q.bind(n.to_string());
                 }
             }
-            serde_json::Value::Bool(b) => q = q.bind(*b),
+            Value::Bool(b) => q = q.bind(*b),
             _ => q = q.bind(record[col].to_string()),
         }
     }
@@ -263,21 +436,6 @@ pub async fn update_record(
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
-    let allowed_tables = get_table_names(db_conn.clone()).await?;
-    if !allowed_tables.contains(&table_name)
-    {
-        return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
-    }
-
-    let all_columns = get_table_columns(table_name.clone(), db_conn).await?;
-    if !all_columns.contains(&primary_key_column)
-    {
-        return Err(format!(
-            "Kolumna '{}' nie istnieje w tabeli '{}'",
-            primary_key_column, table_name
-        ));
-    }
-
     if updated_record.is_empty()
     {
         return Err("Brak danych do aktualizacji".into());
@@ -297,9 +455,9 @@ pub async fn update_record(
     {
         match &updated_record[col]
         {
-            serde_json::Value::Null => q = q.bind(None::<String>),
-            serde_json::Value::String(s) => q = q.bind(s),
-            serde_json::Value::Number(n) =>
+            Value::Null => q = q.bind(None::<String>),
+            Value::String(s) => q = q.bind(s),
+            Value::Number(n) =>
             {
                 if let Some(i) = n.as_i64()
                 {
@@ -314,7 +472,7 @@ pub async fn update_record(
                     q = q.bind(n.to_string());
                 }
             }
-            serde_json::Value::Bool(b) => q = q.bind(*b),
+            Value::Bool(b) => q = q.bind(*b),
             _ => q = q.bind(updated_record[col].to_string()),
         }
     }
