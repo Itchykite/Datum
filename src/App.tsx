@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -16,6 +16,12 @@ function App() {
   const [isAddRecordModalOpen, setIsAddRecordModalOpen] = useState(false);
   const [isUpdateRecordModalOpen, setIsUpdateRecordModalOpen] = useState(false);
 
+  const [selectedRecord, setSelectedRecord] = useState<Record<
+    string,
+    any
+  > | null>(null);
+  const [primaryKeyColumn, setPrimaryKeyColumn] = useState<string>("");
+
   const fetchTableNames = () => {
     console.log("Pobieram listę tabel...");
     setStatus("Pobieranie listy tabel...");
@@ -26,11 +32,9 @@ function App() {
         setTableNames(names);
         setStatus("");
         setIsReady(true);
-        if (names.length > 0) {
-          if (!activeTable) {
-            handleTableSelect(names[0]);
-          }
-        } else {
+        if (names.length > 0 && !activeTable) {
+          handleTableSelect(names[0]);
+        } else if (names.length === 0) {
           setStatus("Baza danych nie zawiera tabel.");
         }
       })
@@ -48,10 +52,14 @@ function App() {
     setActiveTable(tableName);
     setStatus(`Ładowanie danych tabeli ${tableName}...`);
     setTableContent([]);
+    setSelectedRecord(null);
 
     invoke<string[]>("get_table_columns", { tableName })
       .then((columns) => {
         setColumnNames(columns);
+        const pk = columns.length > 0 ? columns[0] : "";
+        setPrimaryKeyColumn(pk);
+
         return invoke<any[]>("get_table_content", { tableName });
       })
       .then((content) => {
@@ -63,6 +71,7 @@ function App() {
         setError(errorMsg);
         setColumnNames([]);
         setTableContent([]);
+        setSelectedRecord(null);
         setStatus(`Błąd ładowania tabeli ${tableName}: ${errorMsg}`);
       });
   };
@@ -74,13 +83,19 @@ function App() {
   const updateRecord = (
     tableName: string,
     recordId: any,
+    primaryKeyColumn: string,
     updatedRecord: Record<string, any>,
   ) => {
-    return invoke("update_record", { tableName, recordId, updatedRecord });
+    return invoke("update_record", {
+      tableName,
+      recordId: String(recordId),
+      primaryKeyColumn,
+      updatedRecord,
+    });
   };
 
   useEffect(() => {
-    let unlistenPromise = listen("database-connected", () => {
+    const unlistenPromise = listen("database-connected", () => {
       console.log("Odebrano zdarzenie database-connected");
       fetchTableNames();
     });
@@ -96,7 +111,7 @@ function App() {
 
   return (
     <>
-      {/* Modal dodawnaia rekordu */}
+      {/* Modal dodawania rekordu */}
       {isAddRecordModalOpen && (
         <div className="popup-overlay">
           <div className="popup-modal">
@@ -106,30 +121,36 @@ function App() {
                 e.preventDefault();
                 const formData = new FormData(e.currentTarget);
                 const record: Record<string, any> = {};
-                columnNames.forEach((col) => {
-                  const value = formData.get(col);
-                  record[col] = value === "" ? null : value;
-                });
+                columnNames
+                  .filter((col) => col !== primaryKeyColumn)
+                  .forEach((col) => {
+                    const value = formData.get(col);
+                    record[col] = value === "" ? null : value;
+                  });
                 try {
                   await insertRecord(activeTable, record);
                   alert("Rekord dodany pomyślnie!");
                   handleTableSelect(activeTable);
                   setIsAddRecordModalOpen(false);
                 } catch (err) {
-                  alert("Błąd podczas dodawania rekordu: " + err);
+                  alert("Błąd podczas dodawania rekordu: " + String(err));
                 }
               }}
             >
-              {columnNames.map((col) => (
-                <div key={col} className="form-group">
-                  <label htmlFor={col}>{col}:</label>
-                  <input type="text" id={col} name={col} />
-                </div>
-              ))}
-
+              {columnNames
+                .filter((col) => col !== primaryKeyColumn)
+                .map((col) => (
+                  <div key={col} className="form-group">
+                    <label htmlFor={col}>{col}:</label>
+                    <input type="text" id={col} name={col} />
+                  </div>
+                ))}
               <div className="popup-actions">
                 <button type="submit">Dodaj rekord</button>
-                <button onClick={() => setIsAddRecordModalOpen(false)}>
+                <button
+                  type="button"
+                  onClick={() => setIsAddRecordModalOpen(false)}
+                >
                   Zamknij
                 </button>
               </div>
@@ -138,7 +159,7 @@ function App() {
         </div>
       )}
       {/* Modal aktualizacji rekordu */}
-      {isUpdateRecordModalOpen && (
+      {isUpdateRecordModalOpen && selectedRecord && (
         <div className="popup-overlay">
           <div className="popup-modal">
             <h2>Aktualizuj rekord w tabeli {activeTable}</h2>
@@ -146,40 +167,60 @@ function App() {
               onSubmit={async (e) => {
                 e.preventDefault();
                 const formData = new FormData(e.currentTarget);
-                const recordId = formData.get("recordId");
                 const updatedRecord: Record<string, any> = {};
-                columnNames.forEach((col) => {
-                  if (col !== "id") {
+                columnNames
+                  .filter((col) => col !== primaryKeyColumn)
+                  .forEach((col) => {
                     const value = formData.get(col);
                     updatedRecord[col] = value === "" ? null : value;
-                  }
-                });
+                  });
                 try {
-                  await updateRecord(activeTable, recordId, updatedRecord);
+                  const recordId = selectedRecord[primaryKeyColumn];
+                  await updateRecord(
+                    activeTable,
+                    recordId,
+                    primaryKeyColumn,
+                    updatedRecord,
+                  );
                   alert("Rekord zaktualizowany pomyślnie!");
                   handleTableSelect(activeTable);
                   setIsUpdateRecordModalOpen(false);
                 } catch (err) {
-                  alert("Błąd podczas aktualizacji rekordu: " + err);
+                  alert("Błąd podczas aktualizacji rekordu: " + String(err));
                 }
               }}
             >
               <div className="form-group">
-                <label htmlFor="recordId">ID rekordu do aktualizacji:</label>
-                <input type="text" id="recordId" name="recordId" required />
+                <label htmlFor={primaryKeyColumn}>
+                  {primaryKeyColumn} (ID):
+                </label>
+                <input
+                  type="text"
+                  id={primaryKeyColumn}
+                  name={primaryKeyColumn}
+                  value={selectedRecord[primaryKeyColumn]}
+                  readOnly
+                />
               </div>
               {columnNames
-                .filter((col) => col !== "id")
+                .filter((col) => col !== primaryKeyColumn)
                 .map((col) => (
                   <div key={col} className="form-group">
                     <label htmlFor={col}>{col}:</label>
-                    <input type="text" id={col} name={col} />
+                    <input
+                      type="text"
+                      id={col}
+                      name={col}
+                      defaultValue={selectedRecord[col] ?? ""}
+                    />
                   </div>
                 ))}
-
               <div className="popup-actions">
                 <button type="submit">Aktualizuj rekord</button>
-                <button onClick={() => setIsUpdateRecordModalOpen(false)}>
+                <button
+                  type="button"
+                  onClick={() => setIsUpdateRecordModalOpen(false)}
+                >
                   Zamknij
                 </button>
               </div>
@@ -187,7 +228,7 @@ function App() {
           </div>
         </div>
       )}
-      {/* Główny interfejs zarządzania bazą danych */}
+      {/* Główny interfejs */}
       <div className="database-manager">
         <aside className="sidebar">
           <div className="sidebar-operations">
@@ -207,9 +248,10 @@ function App() {
               <li>
                 <a
                   href="#"
+                  className={!selectedRecord ? "disabled-link" : ""}
                   onClick={(e) => {
                     e.preventDefault();
-                    setIsUpdateRecordModalOpen(true);
+                    if (selectedRecord) setIsUpdateRecordModalOpen(true);
                   }}
                 >
                   Aktualizuj rekord
@@ -258,16 +300,36 @@ function App() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th>Zaznacz</th>
                     {columnNames.map((col) => (
                       <th key={col}>{col}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {tableContent.map((row, rowIndex) => (
-                    <tr key={rowIndex}>
+                  {tableContent.map((row) => (
+                    <tr
+                      key={row[primaryKeyColumn]}
+                      className={
+                        selectedRecord?.[primaryKeyColumn] ===
+                        row[primaryKeyColumn]
+                          ? "selected-row"
+                          : ""
+                      }
+                    >
+                      <td>
+                        <input
+                          type="radio"
+                          name="record-select"
+                          checked={
+                            selectedRecord?.[primaryKeyColumn] ===
+                            row[primaryKeyColumn]
+                          }
+                          onChange={() => setSelectedRecord(row)}
+                        />
+                      </td>
                       {columnNames.map((col) => (
-                        <td key={`${rowIndex}-${col}`}>
+                        <td key={`${row[primaryKeyColumn]}-${col}`}>
                           {row[col] === null || row[col] === undefined ? (
                             <em>NULL</em>
                           ) : (

@@ -351,3 +351,9 @@ body {
 .form-group input:hover {
   border-color: #b0b7bf;
 }
+
+.disabled-link {
+  color: #999;
+  pointer-events: none;
+  cursor: not-allowed;
+}

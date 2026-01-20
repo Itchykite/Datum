@@ -1,4 +1,5 @@
-use crate::DbConnection;
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{
@@ -9,11 +10,13 @@ use sqlx::{
     },
     Column, Row, TypeInfo, ValueRef,
 };
-use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::DbConnection;
+
 #[derive(Deserialize)]
-pub struct ConnectionDetails {
+pub struct ConnectionDetails
+{
     host: String,
     port: u16,
     user: String,
@@ -27,7 +30,8 @@ pub async fn connect_db(
     details: ConnectionDetails,
     app_handle: AppHandle,
     db_conn: State<'_, DbConnection>,
-) -> Result<(), String> {
+) -> Result<(), String>
+{
     let db_url = format!(
         "mysql://{}:{}@{}:{}/{}",
         details.user,
@@ -45,13 +49,15 @@ pub async fn connect_db(
 
     *db_conn.0.lock().await = Some(pool);
 
-    if let Some(main_window) = app_handle.get_webview_window("main") {
+    if let Some(main_window) = app_handle.get_webview_window("main")
+    {
         main_window.show().unwrap();
         main_window.maximize().unwrap();
         main_window.emit("database-connected", ()).unwrap();
     }
 
-    if let Some(login_window) = app_handle.get_webview_window("login") {
+    if let Some(login_window) = app_handle.get_webview_window("login")
+    {
         login_window.close().unwrap();
     }
 
@@ -59,7 +65,8 @@ pub async fn connect_db(
 }
 
 #[tauri::command]
-pub async fn get_table_names(db_conn: State<'_, DbConnection>) -> Result<Vec<String>, String> {
+pub async fn get_table_names(db_conn: State<'_, DbConnection>) -> Result<Vec<String>, String>
+{
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
@@ -73,10 +80,8 @@ pub async fn get_table_names(db_conn: State<'_, DbConnection>) -> Result<Vec<Str
 }
 
 #[tauri::command]
-pub async fn get_table_columns(
-    table_name: String,
-    db_conn: State<'_, DbConnection>,
-) -> Result<Vec<String>, String> {
+pub async fn get_table_columns(table_name: String, db_conn: State<'_, DbConnection>) -> Result<Vec<String>, String>
+{
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
@@ -92,54 +97,54 @@ pub async fn get_table_columns(
 }
 
 #[tauri::command]
-pub async fn get_table_content(
-    table_name: String,
-    db_conn: State<'_, DbConnection>,
-) -> Result<Vec<Value>, String> {
+pub async fn get_table_content(table_name: String, db_conn: State<'_, DbConnection>) -> Result<Vec<Value>, String>
+{
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
     let allowed_tables = get_table_names(db_conn).await?;
-    if !allowed_tables.contains(&table_name) {
+    if !allowed_tables.contains(&table_name)
+    {
         return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
     }
 
     let query = format!("SELECT * FROM `{}`", table_name);
-    let rows = sqlx::query(&query)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows = sqlx::query(&query).fetch_all(&pool).await.map_err(|e| e.to_string())?;
 
     let result: Vec<Value> = rows
         .into_iter()
         .map(|row| {
             let mut obj = serde_json::Map::new();
-            for (i, col) in row.columns().iter().enumerate() {
+            for (i, col) in row.columns().iter().enumerate()
+            {
                 let col_name = col.name();
                 let raw_val = row.try_get_raw(i).unwrap();
 
-                let val: Value = if raw_val.is_null() {
+                let val: Value = if raw_val.is_null()
+                {
                     Value::Null
-                } else {
-                    match col.type_info().name() {
-                        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR" => {
+                }
+                else
+                {
+                    match col.type_info().name()
+                    {
+                        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR" =>
+                        {
                             json!(row.get::<Option<i64>, _>(i))
                         }
                         "FLOAT" | "DOUBLE" => json!(row.get::<Option<f64>, _>(i)),
-                        "DECIMAL" | "NEWDECIMAL" => {
+                        "DECIMAL" | "NEWDECIMAL" =>
+                        {
                             json!(row.get::<Option<BigDecimal>, _>(i).map(|d| d.to_string()))
                         }
                         "ENUM" => json!(row.get::<Option<String>, _>(i)),
 
-                        "DATETIME" => json!(row
-                            .get::<Option<NaiveDateTime>, _>(i)
-                            .map(|dt| dt.to_string())),
-                        "TIMESTAMP" => {
-                            json!(row
-                                .get::<Option<DateTime<Utc>>, _>(i)
-                                .map(|dt| dt.to_rfc3339()))
+                        "DATETIME" => json!(row.get::<Option<NaiveDateTime>, _>(i).map(|dt| dt.to_string())),
+                        "TIMESTAMP" =>
+                        {
+                            json!(row.get::<Option<DateTime<Utc>>, _>(i).map(|dt| dt.to_rfc3339()))
                         }
                         "DATE" => json!(row.get::<Option<NaiveDate>, _>(i).map(|d| d.to_string())),
                         "TIME" => json!(row.get::<Option<NaiveTime>, _>(i).map(|t| t.to_string())),
@@ -158,25 +163,22 @@ pub async fn get_table_content(
 }
 
 #[tauri::command]
-pub async fn get_fields_from_table(
-    table_name: String,
-    db_conn: State<'_, DbConnection>,
-) -> Result<Vec<String>, String> {
+pub async fn get_fields_from_table(table_name: String, db_conn: State<'_, DbConnection>)
+    -> Result<Vec<String>, String>
+{
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
     let allowed_tables = get_table_names(db_conn).await?;
-    if !allowed_tables.contains(&table_name) {
+    if !allowed_tables.contains(&table_name)
+    {
         return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
     }
 
     let query = format!("DESCRIBE `{}`", table_name);
-    let rows = sqlx::query(&query)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows = sqlx::query(&query).fetch_all(&pool).await.map_err(|e| e.to_string())?;
 
     let field_names: Vec<String> = rows.into_iter().map(|row| row.get("Field")).collect();
 
@@ -188,18 +190,21 @@ pub async fn insert_record(
     table_name: String,
     record: HashMap<String, serde_json::Value>,
     db_conn: State<'_, DbConnection>,
-) -> Result<(), String> {
+) -> Result<(), String>
+{
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
     let allowed_tables = get_table_names(db_conn).await?;
-    if !allowed_tables.contains(&table_name) {
+    if !allowed_tables.contains(&table_name)
+    {
         return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
     }
 
-    if record.is_empty() {
+    if record.is_empty()
+    {
         return Err("Brak danych do wstawienia".into());
     }
 
@@ -214,16 +219,24 @@ pub async fn insert_record(
     );
 
     let mut q = sqlx::query(&query);
-    for col in &columns {
-        match &record[col] {
+    for col in &columns
+    {
+        match &record[col]
+        {
             serde_json::Value::Null => q = q.bind(None::<String>),
             serde_json::Value::String(s) => q = q.bind(s),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
+            serde_json::Value::Number(n) =>
+            {
+                if let Some(i) = n.as_i64()
+                {
                     q = q.bind(i);
-                } else if let Some(f) = n.as_f64() {
+                }
+                else if let Some(f) = n.as_f64()
+                {
                     q = q.bind(f);
-                } else {
+                }
+                else
+                {
                     q = q.bind(n.to_string());
                 }
             }
@@ -240,45 +253,64 @@ pub async fn insert_record(
 pub async fn update_record(
     table_name: String,
     record_id: String,
+    primary_key_column: String,
     updated_record: HashMap<String, serde_json::Value>,
     db_conn: State<'_, DbConnection>,
-) -> Result<(), String> {
+) -> Result<(), String>
+{
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
-    let allowed_tables = get_table_names(db_conn).await?;
-    if !allowed_tables.contains(&table_name) {
+    let allowed_tables = get_table_names(db_conn.clone()).await?;
+    if !allowed_tables.contains(&table_name)
+    {
         return Err(format!("Niedozwolona nazwa tabeli: {}", table_name));
     }
 
-    if updated_record.is_empty() {
+    let all_columns = get_table_columns(table_name.clone(), db_conn).await?;
+    if !all_columns.contains(&primary_key_column)
+    {
+        return Err(format!(
+            "Kolumna '{}' nie istnieje w tabeli '{}'",
+            primary_key_column, table_name
+        ));
+    }
+
+    if updated_record.is_empty()
+    {
         return Err("Brak danych do aktualizacji".into());
     }
 
-    let set_clauses: Vec<String> = updated_record
-        .keys()
-        .map(|col| format!("{} = ?", col))
-        .collect();
+    let set_clauses: Vec<String> = updated_record.keys().map(|col| format!("`{}` = ?", col)).collect();
 
     let query = format!(
-        "UPDATE `{}` SET {} WHERE id = ?",
+        "UPDATE `{}` SET {} WHERE `{}` = ?",
         table_name,
-        set_clauses.join(", ")
+        set_clauses.join(", "),
+        primary_key_column
     );
 
     let mut q = sqlx::query(&query);
-    for col in updated_record.keys() {
-        match &updated_record[col] {
+    for col in updated_record.keys()
+    {
+        match &updated_record[col]
+        {
             serde_json::Value::Null => q = q.bind(None::<String>),
             serde_json::Value::String(s) => q = q.bind(s),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
+            serde_json::Value::Number(n) =>
+            {
+                if let Some(i) = n.as_i64()
+                {
                     q = q.bind(i);
-                } else if let Some(f) = n.as_f64() {
+                }
+                else if let Some(f) = n.as_f64()
+                {
                     q = q.bind(f);
-                } else {
+                }
+                else
+                {
                     q = q.bind(n.to_string());
                 }
             }
