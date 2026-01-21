@@ -51,6 +51,7 @@ function App() {
   const [isReady, setIsReady] = useState(false);
   const [isAddRecordModalOpen, setIsAddRecordModalOpen] = useState(false);
   const [isUpdateRecordModalOpen, setIsUpdateRecordModalOpen] = useState(false);
+  const [isDeleteRecordModalOpen, setIsDeleteRecordModalOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<Record<
     string,
     any
@@ -72,9 +73,9 @@ function App() {
   const showNotification = (message: string, type: "success" | "error") => {
     setNotification({ message, type });
   };
-  
+
   const handleLogout = async () => {
-      await invoke("disconnect_db");
+    await invoke("disconnect_db");
   };
 
   const fetchForeignKeyValues = async (fks: Record<string, ForeignKeyInfo>) => {
@@ -111,6 +112,12 @@ function App() {
     if (selectedRecord) {
       fetchForeignKeyValues(foreignKeys);
       setIsUpdateRecordModalOpen(true);
+    }
+  };
+
+  const openDeleteModel = () => {
+    if (selectedRecord) {
+      setIsDeleteRecordModalOpen(true);
     }
   };
 
@@ -216,6 +223,29 @@ function App() {
     } catch (err) {
       showNotification(
         `Błąd podczas aktualizacji rekordu: ${String(err)}`,
+        "error",
+      );
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedRecord) return;
+    try {
+      const recordId = selectedRecord[primaryKeyColumn];
+      await invoke("delete_record", {
+        tableName: activeTable,
+        recordId: String(recordId),
+        primaryKeyColumn,
+      });
+      showNotification("Rekord usunięty pomyślnie!", "success");
+      setTimeout(() => {
+        setIsDeleteRecordModalOpen(false);
+        setSelectedRecord(null);
+        handleTableSelect(activeTable);
+      }, 50);
+    } catch (err) {
+      showNotification(
+        `Błąd podczas usuwania rekordu: ${String(err)}`,
         "error",
       );
     }
@@ -379,6 +409,35 @@ function App() {
           </div>
         </div>
       )}
+
+      {isDeleteRecordModalOpen && selectedRecord && (
+        <div className="popup-overlay">
+          <div className="popup-modal">
+            <h2>Usuń rekord z tabeli {activeTable}</h2>
+            <p>
+              Czy na pewno chcesz usunąć rekord o ID:{" "}
+              {selectedRecord[primaryKeyColumn]}?
+            </p>
+            <div className="popup-actions">
+              <button
+                className="btn-danger"
+                onClick={() => {
+                  handleDelete();
+                }}
+              >
+                Usuń rekord
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => setIsDeleteRecordModalOpen(false)}
+              >
+                Anuluj
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="database-manager">
         <aside className="sidebar">
           <div className="sidebar-operations">
@@ -408,6 +467,18 @@ function App() {
                   Aktualizuj rekord
                 </a>
               </li>
+              <li>
+                <a
+                  href="#"
+                  className={!selectedRecord ? "disabled-link" : ""}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (selectedRecord) openDeleteModel();
+                  }}
+                >
+                  Usuń rekord
+                </a>
+              </li>
             </ul>
           </div>
           <div className="sidebar-tables">
@@ -432,7 +503,9 @@ function App() {
             </ul>
           </div>
           <div className="sidebar-footer">
-              <a href="#" onClick={handleLogout}>Wyloguj</a>
+            <a href="#" onClick={handleLogout}>
+              Wyloguj
+            </a>
           </div>
         </aside>
         <main className="main-content">

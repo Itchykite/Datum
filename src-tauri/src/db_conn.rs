@@ -15,8 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use crate::DbConnection;
 
 #[derive(Deserialize)]
-pub struct ConnectionDetails
-{
+pub struct ConnectionDetails {
     host: String,
     port: u16,
     user: String,
@@ -26,8 +25,7 @@ pub struct ConnectionDetails
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ForeignKeyInfo
-{
+pub struct ForeignKeyInfo {
     pub column_name: String,
     pub referenced_table: String,
     pub referenced_column: String,
@@ -36,39 +34,38 @@ pub struct ForeignKeyInfo
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ForeignKeyValue
-{
+pub struct ForeignKeyValue {
     pub id: Value,
     pub display: String,
 }
 
 #[tauri::command]
-pub async fn disconnect_db<R: Runtime>(app_handle: AppHandle<R>, db_conn: State<'_, DbConnection>)
-    -> Result<(), String>
-{
+pub async fn disconnect_db<R: Runtime>(
+    app_handle: AppHandle<R>,
+    db_conn: State<'_, DbConnection>,
+) -> Result<(), String> {
     let mut pool_guard = db_conn.0.lock().await;
-    if let Some(pool) = pool_guard.take()
-    {
+    if let Some(pool) = pool_guard.take() {
         pool.close().await;
     }
 
-    if let Some(login_window) = app_handle.get_webview_window("login")
-    {
+    if let Some(login_window) = app_handle.get_webview_window("login") {
         login_window.show().map_err(|e| e.to_string())?;
         login_window.set_focus().map_err(|e| e.to_string())?;
-    }
-    else
-    {
-        tauri::WebviewWindowBuilder::new(&app_handle, "login", tauri::WebviewUrl::App("login.html".into()))
-            .title("Datum - Logowanie")
-            .inner_size(400.0, 550.0)
-            .resizable(false)
-            .build()
-            .map_err(|e| e.to_string())?;
+    } else {
+        tauri::WebviewWindowBuilder::new(
+            &app_handle,
+            "login",
+            tauri::WebviewUrl::App("login.html".into()),
+        )
+        .title("Datum - Logowanie")
+        .inner_size(400.0, 550.0)
+        .resizable(false)
+        .build()
+        .map_err(|e| e.to_string())?;
     }
 
-    if let Some(main_window) = app_handle.get_webview_window("main")
-    {
+    if let Some(main_window) = app_handle.get_webview_window("main") {
         main_window.hide().map_err(|e| e.to_string())?;
     }
 
@@ -80,8 +77,7 @@ pub async fn connect_db<R: Runtime>(
     details: ConnectionDetails,
     app_handle: AppHandle<R>,
     db_conn: State<'_, DbConnection>,
-) -> Result<(), String>
-{
+) -> Result<(), String> {
     let db_url = format!(
         "mysql://{}:{}@{}:{}/{}",
         details.user,
@@ -99,23 +95,25 @@ pub async fn connect_db<R: Runtime>(
 
     *db_conn.0.lock().await = Some(pool);
 
-    if let Some(main_window) = app_handle.get_webview_window("main")
-    {
+    if let Some(main_window) = app_handle.get_webview_window("main") {
         main_window.show().map_err(|e| e.to_string())?;
         main_window.maximize().map_err(|e| e.to_string())?;
-        main_window.emit("database-connected", ()).map_err(|e| e.to_string())?;
+        main_window
+            .emit("database-connected", ())
+            .map_err(|e| e.to_string())?;
     }
 
-    if let Some(login_window) = app_handle.get_webview_window("login")
-    {
+    if let Some(login_window) = app_handle.get_webview_window("login") {
         login_window.hide().map_err(|e| e.to_string())?;
     }
 
     Ok(())
 }
 
-async fn get_foreign_keys(table_name: &str, pool: &MySqlPool) -> Result<HashMap<String, ForeignKeyInfo>, sqlx::Error>
-{
+async fn get_foreign_keys(
+    table_name: &str,
+    pool: &MySqlPool,
+) -> Result<HashMap<String, ForeignKeyInfo>, sqlx::Error> {
     let query = "
         SELECT
             kcu.COLUMN_NAME,
@@ -132,8 +130,7 @@ async fn get_foreign_keys(table_name: &str, pool: &MySqlPool) -> Result<HashMap<
     let rows = sqlx::query(query).bind(table_name).fetch_all(pool).await?;
     let mut fks = HashMap::new();
 
-    for row in rows
-    {
+    for row in rows {
         let column_name: String = row.try_get(0)?;
         let referenced_table: String = row.try_get(1)?;
         let referenced_column: String = row.try_get(2)?;
@@ -158,8 +155,10 @@ async fn get_foreign_keys(table_name: &str, pool: &MySqlPool) -> Result<HashMap<
     Ok(fks)
 }
 
-async fn find_descriptive_column(pool: &MySqlPool, table_name: &str) -> Result<String, sqlx::Error>
-{
+async fn find_descriptive_column(
+    pool: &MySqlPool,
+    table_name: &str,
+) -> Result<String, sqlx::Error> {
     let columns_query =
         "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
     let columns: Vec<String> = sqlx::query(columns_query)
@@ -170,11 +169,11 @@ async fn find_descriptive_column(pool: &MySqlPool, table_name: &str) -> Result<S
         .map(|row| row.get(0))
         .collect();
 
-    let preferred_names = ["name", "username", "title", "label", "nazwa", "login", "tytul"];
-    for name in &preferred_names
-    {
-        if let Some(found) = columns.iter().find(|c| c.eq_ignore_ascii_case(name))
-        {
+    let preferred_names = [
+        "name", "username", "title", "label", "nazwa", "login", "tytul",
+    ];
+    for name in &preferred_names {
+        if let Some(found) = columns.iter().find(|c| c.eq_ignore_ascii_case(name)) {
             return Ok(found.clone());
         }
     }
@@ -182,37 +181,44 @@ async fn find_descriptive_column(pool: &MySqlPool, table_name: &str) -> Result<S
     Ok(columns.get(1).unwrap_or(&columns[0]).clone())
 }
 
-fn row_to_json_value(row: &sqlx::mysql::MySqlRow, i: usize) -> Result<Value, sqlx::Error>
-{
+fn row_to_json_value(row: &sqlx::mysql::MySqlRow, i: usize) -> Result<Value, sqlx::Error> {
     let raw_val = row.try_get_raw(i)?;
-    if raw_val.is_null()
-    {
+    if raw_val.is_null() {
         return Ok(Value::Null);
     }
 
     let type_info = raw_val.type_info();
-    let val = match type_info.name()
-    {
-        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR" => json!(row.try_get::<Option<i64>, _>(i)?),
+    let val = match type_info.name() {
+        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR" => {
+            json!(row.try_get::<Option<i64>, _>(i)?)
+        }
         "FLOAT" | "DOUBLE" => json!(row.try_get::<Option<f64>, _>(i)?),
-        "DECIMAL" | "NEWDECIMAL" => json!(row.try_get::<Option<BigDecimal>, _>(i)?.map(|d| d.to_string())),
-        "DATETIME" => json!(row.try_get::<Option<NaiveDateTime>, _>(i)?.map(|dt| dt.to_string())),
-        "TIMESTAMP" => json!(row.try_get::<Option<DateTime<Utc>>, _>(i)?.map(|dt| dt.to_rfc3339())),
-        "DATE" => json!(row.try_get::<Option<NaiveDate>, _>(i)?.map(|d| d.to_string())),
-        "TIME" => json!(row.try_get::<Option<NaiveTime>, _>(i)?.map(|t| t.to_string())),
+        "DECIMAL" | "NEWDECIMAL" => json!(row
+            .try_get::<Option<BigDecimal>, _>(i)?
+            .map(|d| d.to_string())),
+        "DATETIME" => json!(row
+            .try_get::<Option<NaiveDateTime>, _>(i)?
+            .map(|dt| dt.to_string())),
+        "TIMESTAMP" => json!(row
+            .try_get::<Option<DateTime<Utc>>, _>(i)?
+            .map(|dt| dt.to_rfc3339())),
+        "DATE" => json!(row
+            .try_get::<Option<NaiveDate>, _>(i)?
+            .map(|d| d.to_string())),
+        "TIME" => json!(row
+            .try_get::<Option<NaiveTime>, _>(i)?
+            .map(|t| t.to_string())),
         "BOOLEAN" => json!(row.try_get::<Option<bool>, _>(i)?),
         _ => json!(row.try_get::<Option<String>, _>(i)?),
     };
     Ok(val)
 }
 
-fn rows_to_json(rows: Vec<sqlx::mysql::MySqlRow>) -> Result<Vec<Value>, String>
-{
+fn rows_to_json(rows: Vec<sqlx::mysql::MySqlRow>) -> Result<Vec<Value>, String> {
     rows.into_iter()
         .map(|row| {
             let mut obj = serde_json::Map::new();
-            for (i, col) in row.columns().iter().enumerate()
-            {
+            for (i, col) in row.columns().iter().enumerate() {
                 let col_name = col.name();
                 let val = row_to_json_value(&row, i).map_err(|e| e.to_string())?;
                 obj.insert(col_name.to_string(), val);
@@ -223,8 +229,7 @@ fn rows_to_json(rows: Vec<sqlx::mysql::MySqlRow>) -> Result<Vec<Value>, String>
 }
 
 #[tauri::command]
-pub async fn get_table_names(db_conn: State<'_, DbConnection>) -> Result<Vec<String>, String>
-{
+pub async fn get_table_names(db_conn: State<'_, DbConnection>) -> Result<Vec<String>, String> {
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
@@ -238,8 +243,10 @@ pub async fn get_table_names(db_conn: State<'_, DbConnection>) -> Result<Vec<Str
 }
 
 #[tauri::command]
-pub async fn get_table_columns(table_name: String, db_conn: State<'_, DbConnection>) -> Result<Value, String>
-{
+pub async fn get_table_columns(
+    table_name: String,
+    db_conn: State<'_, DbConnection>,
+) -> Result<Value, String> {
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
@@ -255,7 +262,9 @@ pub async fn get_table_columns(table_name: String, db_conn: State<'_, DbConnecti
         .map(|row| row.get(0))
         .collect();
 
-    let foreign_keys = get_foreign_keys(&table_name, &pool).await.map_err(|e| e.to_string())?;
+    let foreign_keys = get_foreign_keys(&table_name, &pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(json!({
         "columns": column_names,
@@ -267,8 +276,7 @@ pub async fn get_table_columns(table_name: String, db_conn: State<'_, DbConnecti
 pub async fn get_foreign_key_values(
     fk_info: ForeignKeyInfo,
     db_conn: State<'_, DbConnection>,
-) -> Result<Vec<ForeignKeyValue>, String>
-{
+) -> Result<Vec<ForeignKeyValue>, String> {
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
@@ -276,7 +284,10 @@ pub async fn get_foreign_key_values(
 
     let query_str = format!(
         "SELECT `{}` as id, `{}` as display FROM `{}` ORDER BY `{}` ASC",
-        fk_info.referenced_column, fk_info.descriptive_column, fk_info.referenced_table, fk_info.descriptive_column
+        fk_info.referenced_column,
+        fk_info.descriptive_column,
+        fk_info.referenced_table,
+        fk_info.descriptive_column
     );
 
     let rows = sqlx::query(&query_str)
@@ -297,8 +308,10 @@ pub async fn get_foreign_key_values(
 }
 
 #[tauri::command]
-pub async fn get_table_content(table_name: String, db_conn: State<'_, DbConnection>) -> Result<Vec<Value>, String>
-{
+pub async fn get_table_content(
+    table_name: String,
+    db_conn: State<'_, DbConnection>,
+) -> Result<Vec<Value>, String> {
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
@@ -311,8 +324,7 @@ pub async fn get_table_content(table_name: String, db_conn: State<'_, DbConnecti
     let mut select_clauses = vec!["`main_table`.*".to_string()];
     let mut join_clauses = Vec::new();
 
-    for (i, fk_info) in foreign_keys.values().enumerate()
-    {
+    for (i, fk_info) in foreign_keys.values().enumerate() {
         let join_table_alias = format!("jt{}", i);
         select_clauses.push(format!(
             "`{}`.`{}` AS `{}`",
@@ -344,16 +356,20 @@ pub async fn get_table_content(table_name: String, db_conn: State<'_, DbConnecti
 }
 
 #[tauri::command]
-pub async fn get_fields_from_table(table_name: String, db_conn: State<'_, DbConnection>)
-    -> Result<Vec<String>, String>
-{
+pub async fn get_fields_from_table(
+    table_name: String,
+    db_conn: State<'_, DbConnection>,
+) -> Result<Vec<String>, String> {
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
     let query = format!("DESCRIBE `{}`", table_name);
-    let rows = sqlx::query(&query).fetch_all(&pool).await.map_err(|e| e.to_string())?;
+    let rows = sqlx::query(&query)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let field_names: Vec<String> = rows.into_iter().map(|row| row.get("Field")).collect();
 
@@ -365,15 +381,13 @@ pub async fn insert_record(
     table_name: String,
     record: HashMap<String, serde_json::Value>,
     db_conn: State<'_, DbConnection>,
-) -> Result<(), String>
-{
+) -> Result<(), String> {
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
-    if record.is_empty()
-    {
+    if record.is_empty() {
         return Err("Brak danych do wstawienia".into());
     }
 
@@ -392,24 +406,16 @@ pub async fn insert_record(
     );
 
     let mut q = sqlx::query(&query);
-    for col in &columns
-    {
-        match &record[col]
-        {
+    for col in &columns {
+        match &record[col] {
             Value::Null => q = q.bind(None::<String>),
             Value::String(s) => q = q.bind(s),
-            Value::Number(n) =>
-            {
-                if let Some(i) = n.as_i64()
-                {
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
                     q = q.bind(i);
-                }
-                else if let Some(f) = n.as_f64()
-                {
+                } else if let Some(f) = n.as_f64() {
                     q = q.bind(f);
-                }
-                else
-                {
+                } else {
                     q = q.bind(n.to_string());
                 }
             }
@@ -429,19 +435,20 @@ pub async fn update_record(
     primary_key_column: String,
     updated_record: HashMap<String, serde_json::Value>,
     db_conn: State<'_, DbConnection>,
-) -> Result<(), String>
-{
+) -> Result<(), String> {
     let pool = {
         let pool_guard = db_conn.0.lock().await;
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
-    if updated_record.is_empty()
-    {
+    if updated_record.is_empty() {
         return Err("Brak danych do aktualizacji".into());
     }
 
-    let set_clauses: Vec<String> = updated_record.keys().map(|col| format!("`{}` = ?", col)).collect();
+    let set_clauses: Vec<String> = updated_record
+        .keys()
+        .map(|col| format!("`{}` = ?", col))
+        .collect();
 
     let query = format!(
         "UPDATE `{}` SET {} WHERE `{}` = ?",
@@ -451,24 +458,16 @@ pub async fn update_record(
     );
 
     let mut q = sqlx::query(&query);
-    for col in updated_record.keys()
-    {
-        match &updated_record[col]
-        {
+    for col in updated_record.keys() {
+        match &updated_record[col] {
             Value::Null => q = q.bind(None::<String>),
             Value::String(s) => q = q.bind(s),
-            Value::Number(n) =>
-            {
-                if let Some(i) = n.as_i64()
-                {
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
                     q = q.bind(i);
-                }
-                else if let Some(f) = n.as_f64()
-                {
+                } else if let Some(f) = n.as_f64() {
                     q = q.bind(f);
-                }
-                else
-                {
+                } else {
                     q = q.bind(n.to_string());
                 }
             }
@@ -479,5 +478,31 @@ pub async fn update_record(
 
     q = q.bind(record_id);
     q.execute(&pool).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_record(
+    table_name: String,
+    record_id: String,
+    primary_key_column: String,
+    db_conn: State<'_, DbConnection>,
+) -> Result<(), String> {
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
+    let query = format!(
+        "DELETE FROM `{}` WHERE `{}` = ?",
+        table_name, primary_key_column
+    );
+
+    sqlx::query(&query)
+        .bind(record_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
     Ok(())
 }
