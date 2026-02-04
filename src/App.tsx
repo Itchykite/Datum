@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -30,7 +30,7 @@ interface ForeignKeyInfo {
   column_name: string;
   referenced_table: string;
   referenced_column: string;
-  descriptive_column: string;
+  descriptive_columns: string[];
   join_alias: string;
 }
 
@@ -64,6 +64,7 @@ function App() {
     Record<string, ForeignKeyValue[]>
   >({});
   const [displayColumns, setDisplayColumns] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [notification, setNotification] = useState<{
     message: string;
@@ -147,46 +148,57 @@ function App() {
       });
   };
 
-  const handleTableSelect = (tableName: string) => {
+  const handleTableSelect = async (tableName: string) => {
     setError(null);
     setActiveTable(tableName);
     setStatus(`Ładowanie danych tabeli ${tableName}...`);
     setTableContent([]);
     setSelectedRecord(null);
 
-    invoke<{ columns: string[]; foreignKeys: Record<string, ForeignKeyInfo> }>(
-      "get_table_columns",
-      { tableName },
-    )
-      .then((schemaInfo) => {
-        const { columns, foreignKeys } = schemaInfo;
-        setColumnNames(columns);
-        setForeignKeys(foreignKeys);
+    try {
+      const schemaInfo = await invoke<{
+        columns: string[];
+        foreignKeys: Record<string, ForeignKeyInfo>;
+      }>("get_table_columns", { tableName });
 
-        const fkColumns = Object.keys(foreignKeys);
-        const colsToDisplay = columns.filter((col) => !fkColumns.includes(col));
-        Object.values(foreignKeys).forEach((fk) => {
-          colsToDisplay.push(fk.join_alias);
-        });
-        setDisplayColumns(colsToDisplay);
+      const { columns, foreignKeys } = schemaInfo;
+      setColumnNames(columns);
+      setForeignKeys(foreignKeys);
 
-        const pk = columns.length > 0 ? columns[0] : "";
-        setPrimaryKeyColumn(pk);
+      const pk = columns.length > 0 ? columns[0] : "";
+      setPrimaryKeyColumn(pk);
 
-        return invoke<any[]>("get_table_content", { tableName });
-      })
-      .then((content) => {
-        setTableContent(content);
-        setStatus("");
-      })
-      .catch((err) => {
-        const errorMsg = String(err);
-        setError(errorMsg);
-        setColumnNames([]);
-        setTableContent([]);
-        setSelectedRecord(null);
-        setStatus(`Błąd ładowania tabeli ${tableName}: ${errorMsg}`);
-      });
+      const content = await invoke<any[]>("get_table_content", { tableName });
+      setTableContent(content);
+
+      setStatus("");
+      const fkColumns = Object.keys(foreignKeys);
+      const baseColumns = columns.filter((col) => !fkColumns.includes(col));
+
+      const fkDisplayColumns = Object.values(foreignKeys).flatMap((fk) =>
+        fk.descriptive_columns.map((col) => `${fk.column_name}__${col}`),
+      );
+
+      const displayFromData =
+        content.length > 0
+          ? Object.keys(content[0]).filter((key) => key.includes("__"))
+          : [];
+
+      const finalColumns = [
+        ...baseColumns,
+        ...fkDisplayColumns,
+        ...displayFromData,
+      ].filter((col, index, arr) => arr.indexOf(col) === index);
+
+      setDisplayColumns(finalColumns);
+    } catch (err) {
+      const errorMsg = String(err);
+      setError(errorMsg);
+      setColumnNames([]);
+      setTableContent([]);
+      setSelectedRecord(null);
+      setStatus(`Błąd ładowania tabeli ${tableName}: ${errorMsg}`);
+    }
   };
 
   const handleInsert = async (record: Record<string, any>) => {
@@ -292,6 +304,20 @@ function App() {
       unlistenPromise.then((unlistenFn) => unlistenFn());
     };
   }, []);
+
+  const filteredTableContent = useMemo(() => {
+    if (!searchQuery.trim()) return tableContent;
+    const needle = searchQuery.toLowerCase();
+
+    return tableContent.filter((row) =>
+      displayColumns.some((col) => {
+        const value = row[col];
+        return value !== null && value !== undefined
+          ? String(value).toLowerCase().includes(needle)
+          : false;
+      }),
+    );
+  }, [searchQuery, tableContent, displayColumns]);
 
   if (!isReady) {
     return (
@@ -510,21 +536,39 @@ function App() {
         </aside>
         <main className="main-content">
           <header className="main-header">
-            <h1>
-              {activeTable
-                ? `Tabela: ${activeTable}`
-                : "Wybierz tabelę z listy"}
-            </h1>
+            <div>
+              <h1>
+                {activeTable
+                  ? `Tabela: ${activeTable}`
+                  : "Wybierz tabelę z listy"}
+              </h1>
+              {activeTable && !error && (
+                <p className="record-count">
+                  Liczba rekordów: {tableContent.length}
+                </p>
+              )}
+            </div>
             <div className="action-buttons">
               <button className="btn" onClick={fetchTableNames}>
                 Odśwież listę tabel
               </button>
             </div>
           </header>
+
+          <div className="table-tools">
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Szukaj w tabeli..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
           <div className="table-container">
             {error && <p className="error-message">{error}</p>}
             {status && !error && <p>{status}</p>}
-            {tableContent.length > 0 ? (
+            {filteredTableContent.length > 0 ? (
               <table className="data-table">
                 <thead>
                   <tr>
@@ -535,7 +579,7 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tableContent.map((row, index) => (
+                  {filteredTableContent.map((row, index) => (
                     <tr
                       key={row[primaryKeyColumn] || index}
                       className={

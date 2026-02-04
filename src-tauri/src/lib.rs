@@ -24,7 +24,8 @@ pub fn run() {
             db_conn::insert_record,
             db_conn::update_record,
             db_conn::delete_record,
-            db_conn::get_foreign_key_values
+            db_conn::get_foreign_key_values,
+            db_conn::get_num_of_records
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -29,7 +29,7 @@ pub struct ForeignKeyInfo {
     pub column_name: String,
     pub referenced_table: String,
     pub referenced_column: String,
-    pub descriptive_column: String,
+    pub descriptive_columns: Vec<String>,
     pub join_alias: String,
 }
 
@@ -110,6 +110,28 @@ pub async fn connect_db<R: Runtime>(
     Ok(())
 }
 
+async fn find_descriptive_columns(
+    pool: &MySqlPool,
+    table_name: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    let columns_query =
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
+    let columns: Vec<String> = sqlx::query(columns_query)
+        .bind(table_name)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+
+    let result: Vec<String> = columns
+        .into_iter()
+        .filter(|c| !c.eq_ignore_ascii_case("id"))
+        .collect();
+
+    Ok(result)
+}
+
 async fn get_foreign_keys(
     table_name: &str,
     pool: &MySqlPool,
@@ -135,11 +157,9 @@ async fn get_foreign_keys(
         let referenced_table: String = row.try_get(1)?;
         let referenced_column: String = row.try_get(2)?;
 
-        let descriptive_column = find_descriptive_column(pool, &referenced_table)
-            .await
-            .unwrap_or_else(|_| referenced_column.clone());
+        let descriptive_columns = find_descriptive_columns(pool, &referenced_table).await?;
 
-        let join_alias = format!("{}__{}", column_name, descriptive_column);
+        let join_alias = format!("{}__display", column_name);
 
         fks.insert(
             column_name.clone(),
@@ -147,14 +167,13 @@ async fn get_foreign_keys(
                 column_name,
                 referenced_table,
                 referenced_column,
-                descriptive_column,
+                descriptive_columns,
                 join_alias,
             },
         );
     }
     Ok(fks)
 }
-
 async fn find_descriptive_column(
     pool: &MySqlPool,
     table_name: &str,
@@ -282,12 +301,16 @@ pub async fn get_foreign_key_values(
         pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
     };
 
+    let concat_expr = fk_info
+        .descriptive_columns
+        .iter()
+        .map(|c| format!("IFNULL(`{}`,'')", c))
+        .collect::<Vec<_>>()
+        .join(", ' ', ");
+
     let query_str = format!(
-        "SELECT `{}` as id, `{}` as display FROM `{}` ORDER BY `{}` ASC",
-        fk_info.referenced_column,
-        fk_info.descriptive_column,
-        fk_info.referenced_table,
-        fk_info.descriptive_column
+        "SELECT `{}` as id, TRIM(CONCAT({})) as display FROM `{}` ORDER BY display ASC",
+        fk_info.referenced_column, concat_expr, fk_info.referenced_table
     );
 
     let rows = sqlx::query(&query_str)
@@ -326,10 +349,16 @@ pub async fn get_table_content(
 
     for (i, fk_info) in foreign_keys.values().enumerate() {
         let join_table_alias = format!("jt{}", i);
-        select_clauses.push(format!(
-            "`{}`.`{}` AS `{}`",
-            join_table_alias, fk_info.descriptive_column, fk_info.join_alias
-        ));
+
+        for col in &fk_info.descriptive_columns {
+            let aliased_col = format!("{}__{}", fk_info.column_name, col);
+
+            select_clauses.push(format!(
+                "`{}`.`{}` AS `{}`",
+                join_table_alias, col, aliased_col
+            ));
+        }
+
         join_clauses.push(format!(
             "LEFT JOIN `{}` AS `{}` ON `main_table`.`{}` = `{}`.`{}`",
             fk_info.referenced_table,
@@ -505,4 +534,24 @@ pub async fn delete_record(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_num_of_records(
+    table_name: String,
+    db_conn: State<'_, DbConnection>,
+) -> Result<i64, String> {
+    let pool = {
+        let pool_guard = db_conn.0.lock().await;
+        pool_guard.clone().ok_or("Brak połączenia z bazą danych")?
+    };
+
+    let query = format!("SELECT COUNT(*) as count FROM `{}`", table_name);
+    let row = sqlx::query(&query)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let count: i64 = row.try_get("count").map_err(|e| e.to_string())?;
+    Ok(count)
 }
